@@ -35,7 +35,7 @@
       <h1 class="font-bold text-lg truncate">WC26 Predictor</h1>
     </div>
     <nav class="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 text-sm font-medium">
-      <button id="tab-today" class="px-3 py-1.5 rounded-md">Next 48h</button>
+      <button id="tab-today" class="px-3 py-1.5 rounded-md">Next 7 days</button>
       <button id="tab-fixtures" class="px-3 py-1.5 rounded-md">Fixtures</button>
     </nav>
     <button id="btn-settings" title="Settings" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xl leading-none">⚙️</button>
@@ -72,7 +72,7 @@
       <div>
         <label class="block text-sm font-medium mb-1">The Odds API key</label>
         <div id="odds-key-row"></div>
-        <p class="text-xs text-zinc-500 mt-1">Free key from <a href="https://the-odds-api.com" target="_blank" class="underline">the-odds-api.com</a> (no card needed). Powers instant market-based predictions. Stored only in this browser.</p>
+        <p class="text-xs text-zinc-500 mt-1">A built-in free key is used automatically — only save your own (from <a href="https://the-odds-api.com" target="_blank" class="underline">the-odds-api.com</a>) if the shared quota runs out.</p>
       </div>
       <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 text-xs text-zinc-600 dark:text-zinc-300">
         <p class="font-semibold mb-1">✨ AI analysis via Claude Pro — no key needed</p>
@@ -96,9 +96,14 @@
    ============================================================ */
 
 // No paid API needed: the market signal comes from The Odds API (free tier),
-// and AI analysis comes from a Claude Pro subscription at claude.ai via a
-// copy-prompt / paste-reply flow (the app writes the prompt and parses the reply).
+// and AI analysis is pre-generated daily by Claude Code (see scripts/) and
+// published alongside this file as predictions.json. The copy-prompt /
+// paste-reply flow to claude.ai remains as a manual fallback.
 const ODDS_SPORT_KEY = 'soccer_fifa_world_cup';
+// Free-tier key (500 req/month). Public by design — rotate at the-odds-api.com
+// if quota is ever drained. A key saved in Settings overrides it.
+const DEFAULT_ODDS_KEY = '7024636b1052841d193fb99c89913a4d';
+const UPCOMING_DAYS = 7;
 
 const GROUPS = {
   A: ['Mexico', 'South Africa', 'South Korea', 'Czechia'],
@@ -278,7 +283,8 @@ function buildFixtures() {
       kickoffBST: iso, venue: VENUES[v],
     });
   }
-  const ko = loadJSON('knockoutTeams', {});
+  // published knockout teams (synced to all devices) < local manual overrides
+  const ko = Object.assign({}, state.publishedKO || {}, loadJSON('knockoutTeams', {}));
   for (const [id, stage, iso, v, label] of KO) {
     fixtures.push({
       id, stage, group: null,
@@ -319,9 +325,12 @@ const state = {
   claudePanel: null,             // fixture id with the Claude paste panel open
   claudeCopied: false,           // whether the prompt auto-copy succeeded
   claudeDraft: {},               // fixture id -> pasted text preserved across re-renders
+  published: null,               // daily AI analysis fetched from predictions.json
+  publishedKO: null,             // knockout team names fetched from knockouts.json
 };
 
 const getKey = k => localStorage.getItem(k) || '';
+const getOddsKey = () => getKey('oddsApiKey') || DEFAULT_ODDS_KEY;
 const predictions = () => loadJSON('predictions', {});
 
 /* ============================================================
@@ -374,17 +383,27 @@ function render() {
 
 function renderToday() {
   const now = Date.now();
-  const horizon = now + 48 * 3600 * 1000;
+  const horizon = now + UPCOMING_DAYS * 24 * 3600 * 1000;
   // include games that kicked off < 2h ago so an in-progress game doesn't vanish
   const list = state.fixtures.filter(f => {
     const t = new Date(f.kickoffBST).getTime();
     return t > now - 2 * 3600 * 1000 && t <= horizon;
   });
-  let html = `<h2 class="font-semibold text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-3">Kicking off in the next 48 hours</h2>`;
+  const updated = state.published && state.published.generatedAt
+    ? ` <span class="normal-case font-normal tracking-normal">· AI analysis updated ${agoStr(state.published.generatedAt)}</span>` : '';
+  let html = `<h2 class="font-semibold text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-3">Next ${UPCOMING_DAYS} days${updated}</h2>`;
   if (!list.length) {
-    html += `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-500">No games in the next 48 hours.<br><button class="mt-2 underline" data-action="goto-fixtures">Browse all fixtures →</button></div>`;
+    html += `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-500">No games in the next ${UPCOMING_DAYS} days.<br><button class="mt-2 underline" data-action="goto-fixtures">Browse all fixtures →</button></div>`;
   } else {
-    html += list.map(cardHTML).join('');
+    let lastDate = '';
+    for (const f of list) {
+      const d = fmtDateLong.format(new Date(f.kickoffBST));
+      if (d !== lastDate) {
+        html += `<h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mt-4 first:mt-0 mb-2">${d}</h3>`;
+        lastDate = d;
+      }
+      html += cardHTML(f);
+    }
   }
   $('#content').innerHTML = html;
 }
@@ -543,8 +562,15 @@ function cardHTML(f) {
     actionArea = `<button data-action="ko-edit" data-id="${f.id}" class="w-full mt-3 py-2.5 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 text-sm font-medium hover:border-zinc-400">Teams TBD — tap to set once known</button>`;
   } else if (cached) {
     actionArea = predictionHTML(f, cached);
+  } else if (!tbd && publishedAI(f.id)) {
+    // daily auto-analysis published with the site — shows with zero taps;
+    // Refresh blends it with live market odds
+    actionArea = predictionHTML(f, {
+      result: blendSignals(publishedAI(f.id), null),
+      fetchedAt: state.published.generatedAt,
+    });
   } else {
-    const hasOddsKey = !!getKey('oddsApiKey');
+    const hasOddsKey = !!getOddsKey();
     actionArea = `<div class="flex gap-2 mt-3">
       ${hasOddsKey ? `<button data-action="predict" data-id="${f.id}" class="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold">Get prediction</button>` : ''}
       <button data-action="copy-prompt" data-id="${f.id}" class="${hasOddsKey ? '' : 'flex-1 '}py-2.5 px-3 rounded-lg bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white text-sm font-semibold">✨ Claude prompt</button>
@@ -601,25 +627,50 @@ Reply with ONLY this JSON object — no markdown, no other text:
 "home" is ${f.homeTeam}, "away" is ${f.awayTeam}. win_prob values must sum to 100.`;
 }
 
+// Validate + normalise an AI prediction object (pasted or published)
+function normalizeAI(raw) {
+  if (!raw || !raw.ai_score || !raw.win_prob) return null;
+  const wp = raw.win_prob;
+  const sum = (wp.home || 0) + (wp.draw || 0) + (wp.away || 0) || 1;
+  return {
+    win_prob: { home: (wp.home || 0) * 100 / sum, draw: (wp.draw || 0) * 100 / sum, away: (wp.away || 0) * 100 / sum },
+    ai_score: {
+      home: Math.max(0, Math.round(raw.ai_score.home || 0)),
+      away: Math.max(0, Math.round(raw.ai_score.away || 0)),
+    },
+    key_factor: String(raw.key_factor || 'No key factor provided.'),
+  };
+}
+
 // Parse the reply the user pastes back from claude.ai
 function parseAIReply(text) {
   const start = text.indexOf('{'), end = text.lastIndexOf('}');
   if (start === -1 || end <= start) throw new Error('Couldn’t find JSON in the pasted reply — paste Claude’s full answer.');
-  let ai;
-  try { ai = JSON.parse(text.slice(start, end + 1)); }
+  let raw;
+  try { raw = JSON.parse(text.slice(start, end + 1)); }
   catch { throw new Error('Couldn’t parse the pasted reply as JSON — ask Claude to reply with only the JSON object.'); }
-
-  if (!ai.ai_score || !ai.win_prob) throw new Error('Pasted JSON is missing ai_score or win_prob.');
-  // normalise probabilities to sum to exactly 100
-  const wp = ai.win_prob;
-  const sum = (wp.home || 0) + (wp.draw || 0) + (wp.away || 0) || 1;
-  ai.win_prob = { home: (wp.home || 0) * 100 / sum, draw: (wp.draw || 0) * 100 / sum, away: (wp.away || 0) * 100 / sum };
-  ai.ai_score = {
-    home: Math.max(0, Math.round(ai.ai_score.home || 0)),
-    away: Math.max(0, Math.round(ai.ai_score.away || 0)),
-  };
-  ai.key_factor = String(ai.key_factor || 'No key factor provided.');
+  const ai = normalizeAI(raw);
+  if (!ai) throw new Error('Pasted JSON is missing ai_score or win_prob.');
   return ai;
+}
+
+// Daily AI analysis published next to this file by scripts/predict.sh
+function publishedAI(fixtureId) {
+  const entry = state.published && state.published.predictions && state.published.predictions[fixtureId];
+  return entry ? normalizeAI(entry) : null;
+}
+
+async function loadPublished() {
+  try {
+    const res = await fetch('predictions.json', { cache: 'no-store' });
+    if (res.ok) state.published = await res.json();
+  } catch { /* not published yet, or opened from file:// — fine */ }
+  try {
+    const res = await fetch('knockouts.json', { cache: 'no-store' });
+    if (res.ok) state.publishedKO = await res.json();
+  } catch { /* optional */ }
+  state.fixtures = buildFixtures();
+  render();
 }
 
 async function copyText(text) {
@@ -701,7 +752,7 @@ function fitPoisson(implied, totalAnchor) {
 }
 
 async function fetchOddsSignal(f) {
-  const key = getKey('oddsApiKey');
+  const key = getOddsKey();
   if (!key) return null;
 
   const url = `https://api.the-odds-api.com/v4/sports/${ODDS_SPORT_KEY}/odds/?apiKey=${encodeURIComponent(key)}&regions=uk&markets=h2h,totals&oddsFormat=decimal`;
@@ -824,11 +875,12 @@ async function getPrediction(fixtureId) {
 
   try {
     const cached = predictions()[fixtureId];
-    const ai = (cached && cached.signals && cached.signals.ai) || null;
+    // priority: manually pasted analysis > daily published analysis
+    const ai = (cached && cached.signals && cached.signals.ai) || publishedAI(fixtureId);
     const odds = await fetchOddsSignal(f).catch(() => null);
     const result = blendSignals(ai, odds);
     if (!result) {
-      if (!getKey('oddsApiKey')) throw new Error('Add a free Odds API key in Settings, or use the ✨ Claude prompt flow.');
+      if (!getOddsKey()) throw new Error('Add a free Odds API key in Settings, or use the ✨ Claude prompt flow.');
       throw new Error('No bookmaker odds found for this fixture yet — try again closer to kickoff, or use the ✨ Claude prompt flow.');
     }
     savePrediction(fixtureId, result, ai);
@@ -914,7 +966,7 @@ function applyDarkMode() {
 }
 
 function updateBanner() {
-  const show = !getKey('oddsApiKey') && !loadJSON('setupDismissed', false);
+  const show = !getOddsKey() && !loadJSON('setupDismissed', false);
   $('#setup-banner').classList.toggle('hidden', !show);
 }
 
@@ -1003,6 +1055,7 @@ state.fixtures = buildFixtures();
 applyDarkMode();
 updateBanner();
 render();
+loadPublished(); // fetch daily AI analysis + knockout teams, then re-render
 </script>
 </body>
 </html>
