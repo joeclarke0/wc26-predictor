@@ -1,0 +1,1008 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<title>WC26 Predictor</title>
+<meta name="theme-color" content="#18181b">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="WC26">
+<link rel="apple-touch-icon" href="icon.png">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>🏆</text></svg>">
+<script src="https://cdn.tailwindcss.com"></script>
+<script>
+  tailwind.config = { darkMode: 'class' };
+</script>
+<style>
+  html { -webkit-tap-highlight-color: transparent; }
+  .fade-in { animation: fadeIn .25s ease-out; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+  .spinner { display:inline-block; width:14px; height:14px; border:2px solid currentColor; border-right-color:transparent; border-radius:50%; animation:spin .7s linear infinite; vertical-align:-2px; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  /* iOS standalone (Add to Home Screen): keep content clear of the notch and home indicator */
+  header { padding-top: env(safe-area-inset-top); }
+  main { padding-bottom: calc(4rem + env(safe-area-inset-bottom)); }
+</style>
+</head>
+<body class="bg-zinc-100 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 min-h-screen">
+
+<header class="sticky top-0 z-30 bg-white/90 dark:bg-zinc-900/90 backdrop-blur border-b border-zinc-200 dark:border-zinc-800">
+  <div class="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between gap-3">
+    <div class="flex items-center gap-2 min-w-0">
+      <span class="text-xl">🏆</span>
+      <h1 class="font-bold text-lg truncate">WC26 Predictor</h1>
+    </div>
+    <nav class="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 text-sm font-medium">
+      <button id="tab-today" class="px-3 py-1.5 rounded-md">Next 48h</button>
+      <button id="tab-fixtures" class="px-3 py-1.5 rounded-md">Fixtures</button>
+    </nav>
+    <button id="btn-settings" title="Settings" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xl leading-none">⚙️</button>
+  </div>
+</header>
+
+<div id="setup-banner" class="hidden max-w-3xl mx-auto px-4 mt-4">
+  <div class="rounded-xl border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-900/30 p-4 flex items-start gap-3">
+    <span class="text-xl">🔑</span>
+    <div class="flex-1 text-sm">
+      <p class="font-semibold">Free setup — no paid API needed</p>
+      <p class="text-zinc-600 dark:text-zinc-300 mt-0.5">Add a free Odds API key from <a href="https://the-odds-api.com" target="_blank" class="underline">the-odds-api.com</a> for instant market-based predictions. For deeper analysis, use your Claude Pro subscription: tap ✨ on a fixture, paste the prompt into <a href="https://claude.ai/new" target="_blank" class="underline">claude.ai</a>, then paste the reply back.</p>
+      <button id="banner-open-settings" class="mt-2 px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-600 text-white text-sm font-medium">Open Settings</button>
+    </div>
+    <button id="banner-dismiss" class="text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">✕</button>
+  </div>
+</div>
+
+<main class="max-w-3xl mx-auto px-4 py-4 pb-16">
+  <div id="filter-strip" class="hidden mb-4 flex gap-2 overflow-x-auto pb-1 text-sm"></div>
+  <div id="content"></div>
+</main>
+
+<!-- Settings modal -->
+<div id="settings-modal" class="hidden fixed inset-0 z-40">
+  <div class="absolute inset-0 bg-black/50" id="settings-backdrop"></div>
+  <div class="absolute inset-x-0 bottom-0 sm:inset-0 sm:m-auto sm:max-w-md sm:h-fit bg-white dark:bg-zinc-900 rounded-t-2xl sm:rounded-2xl p-5 shadow-xl fade-in">
+    <div class="flex items-center justify-between mb-4">
+      <h2 class="font-bold text-lg">Settings</h2>
+      <button id="settings-close" class="p-2 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200">✕</button>
+    </div>
+
+    <div class="space-y-5">
+      <div>
+        <label class="block text-sm font-medium mb-1">The Odds API key</label>
+        <div id="odds-key-row"></div>
+        <p class="text-xs text-zinc-500 mt-1">Free key from <a href="https://the-odds-api.com" target="_blank" class="underline">the-odds-api.com</a> (no card needed). Powers instant market-based predictions. Stored only in this browser.</p>
+      </div>
+      <div class="rounded-lg bg-zinc-100 dark:bg-zinc-800 p-3 text-xs text-zinc-600 dark:text-zinc-300">
+        <p class="font-semibold mb-1">✨ AI analysis via Claude Pro — no key needed</p>
+        <p>Tap “✨ Claude prompt” on any fixture. The prompt is copied for you — paste it into <a href="https://claude.ai/new" target="_blank" class="underline">claude.ai</a> (web search on), copy Claude’s JSON reply, and paste it back into the fixture card. The app blends it with the market odds.</p>
+      </div>
+      <div class="flex items-center justify-between pt-1 border-t border-zinc-200 dark:border-zinc-800">
+        <span class="text-sm font-medium pt-3">Dark mode</span>
+        <button id="dark-toggle" class="mt-3 w-12 h-7 rounded-full relative transition-colors bg-zinc-300 dark:bg-emerald-600">
+          <span class="absolute top-0.5 left-0.5 w-6 h-6 rounded-full bg-white shadow transition-transform dark:translate-x-5"></span>
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+'use strict';
+
+/* ============================================================
+   1. TOURNAMENT DATA
+   ============================================================ */
+
+// No paid API needed: the market signal comes from The Odds API (free tier),
+// and AI analysis comes from a Claude Pro subscription at claude.ai via a
+// copy-prompt / paste-reply flow (the app writes the prompt and parses the reply).
+const ODDS_SPORT_KEY = 'soccer_fifa_world_cup';
+
+const GROUPS = {
+  A: ['Mexico', 'South Africa', 'South Korea', 'Czechia'],
+  B: ['Canada', 'Bosnia-Herzegovina', 'Qatar', 'Switzerland'],
+  C: ['Brazil', 'Morocco', 'Haiti', 'Scotland'],
+  D: ['USA', 'Paraguay', 'Australia', 'Türkiye'],
+  E: ['Germany', 'Ivory Coast', 'Ecuador', 'Curaçao'],
+  F: ['Netherlands', 'Japan', 'Sweden', 'Tunisia'],
+  G: ['Belgium', 'Egypt', 'Iran', 'New Zealand'],
+  H: ['Spain', 'Saudi Arabia', 'Uruguay', 'Cape Verde'],
+  I: ['France', 'Senegal', 'Norway', 'Iraq'],
+  J: ['Argentina', 'Algeria', 'Austria', 'Jordan'],
+  K: ['Portugal', 'Colombia', 'Congo DR', 'Uzbekistan'],
+  L: ['England', 'Croatia', 'Ghana', 'Panama'],
+};
+
+const FLAGS = {
+  'Mexico':'🇲🇽','South Africa':'🇿🇦','South Korea':'🇰🇷','Czechia':'🇨🇿',
+  'Canada':'🇨🇦','Bosnia-Herzegovina':'🇧🇦','Qatar':'🇶🇦','Switzerland':'🇨🇭',
+  'Brazil':'🇧🇷','Morocco':'🇲🇦','Haiti':'🇭🇹','Scotland':'🏴󠁧󠁢󠁳󠁣󠁴󠁿',
+  'USA':'🇺🇸','Paraguay':'🇵🇾','Australia':'🇦🇺','Türkiye':'🇹🇷',
+  'Germany':'🇩🇪','Ivory Coast':'🇨🇮','Ecuador':'🇪🇨','Curaçao':'🇨🇼',
+  'Netherlands':'🇳🇱','Japan':'🇯🇵','Sweden':'🇸🇪','Tunisia':'🇹🇳',
+  'Belgium':'🇧🇪','Egypt':'🇪🇬','Iran':'🇮🇷','New Zealand':'🇳🇿',
+  'Spain':'🇪🇸','Saudi Arabia':'🇸🇦','Uruguay':'🇺🇾','Cape Verde':'🇨🇻',
+  'France':'🇫🇷','Senegal':'🇸🇳','Norway':'🇳🇴','Iraq':'🇮🇶',
+  'Argentina':'🇦🇷','Algeria':'🇩🇿','Austria':'🇦🇹','Jordan':'🇯🇴',
+  'Portugal':'🇵🇹','Colombia':'🇨🇴','Congo DR':'🇨🇩','Uzbekistan':'🇺🇿',
+  'England':'🏴󠁧󠁢󠁥󠁮󠁧󠁿','Croatia':'🇭🇷','Ghana':'🇬🇭','Panama':'🇵🇦',
+};
+const flag = t => FLAGS[t] || '❓';
+
+const VENUES = [
+  'Estadio Azteca, Mexico City',            // 0
+  'Estadio Akron, Guadalajara',             // 1
+  'Estadio BBVA, Monterrey',                // 2
+  'BC Place, Vancouver',                    // 3
+  'Toronto Stadium, Toronto',               // 4
+  'MetLife Stadium, New York/New Jersey',   // 5
+  'Gillette Stadium, Boston',               // 6
+  'Lincoln Financial Field, Philadelphia',  // 7
+  'Hard Rock Stadium, Miami',               // 8
+  'Mercedes-Benz Stadium, Atlanta',         // 9
+  'NRG Stadium, Houston',                   // 10
+  'AT&T Stadium, Dallas',                   // 11
+  'Arrowhead Stadium, Kansas City',         // 12
+  'SoFi Stadium, Los Angeles',              // 13
+  "Levi's Stadium, San Francisco",          // 14
+  'Lumen Field, Seattle',                   // 15
+];
+
+// Group stage: [group, homeIdx, awayIdx, kickoffBST, venueIdx]
+// Matchday pattern per group — MD1: 1v2, 3v4 · MD2: 1v3, 4v2 · MD3: 4v1, 2v3 (simultaneous)
+const GS = [
+  // ---- Matchday 1 (Jun 11–17) ----
+  ['A',0,1,'2026-06-11T23:00:00+01:00',0],
+  ['A',2,3,'2026-06-12T20:00:00+01:00',1],
+  ['B',0,1,'2026-06-12T22:30:00+01:00',4],
+  ['B',2,3,'2026-06-13T01:00:00+01:00',3],
+  ['C',0,1,'2026-06-13T17:00:00+01:00',5],
+  ['C',2,3,'2026-06-13T20:00:00+01:00',6],
+  ['D',0,1,'2026-06-13T23:00:00+01:00',13],
+  ['D',2,3,'2026-06-14T02:00:00+01:00',14],
+  ['E',0,1,'2026-06-14T17:00:00+01:00',10],
+  ['E',2,3,'2026-06-14T20:00:00+01:00',12],
+  ['F',0,1,'2026-06-14T23:00:00+01:00',11],
+  ['F',2,3,'2026-06-15T01:30:00+01:00',9],
+  ['G',0,1,'2026-06-15T17:00:00+01:00',15],
+  ['G',2,3,'2026-06-15T20:00:00+01:00',3],
+  ['H',0,1,'2026-06-15T23:00:00+01:00',8],
+  ['H',2,3,'2026-06-16T02:00:00+01:00',10],
+  ['I',0,1,'2026-06-16T17:00:00+01:00',7],
+  ['I',2,3,'2026-06-16T20:00:00+01:00',6],
+  ['J',0,1,'2026-06-16T23:00:00+01:00',11],
+  ['J',2,3,'2026-06-17T02:00:00+01:00',2],
+  ['K',0,1,'2026-06-17T17:00:00+01:00',9],
+  ['K',2,3,'2026-06-17T20:00:00+01:00',12],
+  ['L',0,1,'2026-06-17T23:00:00+01:00',5],
+  ['L',2,3,'2026-06-18T01:00:00+01:00',4],
+  // ---- Matchday 2 (Jun 18–23) ----
+  ['B',0,2,'2026-06-18T17:00:00+01:00',3],
+  ['A',3,1,'2026-06-18T20:00:00+01:00',1],
+  ['A',0,2,'2026-06-18T23:00:00+01:00',0],
+  ['B',3,1,'2026-06-19T02:00:00+01:00',4],
+  ['C',3,1,'2026-06-19T17:00:00+01:00',8],
+  ['D',0,2,'2026-06-19T20:00:00+01:00',15],
+  ['C',0,2,'2026-06-19T23:00:00+01:00',7],
+  ['D',3,1,'2026-06-20T02:00:00+01:00',13],
+  ['E',0,2,'2026-06-20T17:00:00+01:00',11],
+  ['E',3,1,'2026-06-20T20:00:00+01:00',10],
+  ['F',0,2,'2026-06-20T23:00:00+01:00',12],
+  ['F',3,1,'2026-06-21T01:00:00+01:00',14],
+  ['G',3,1,'2026-06-21T17:00:00+01:00',3],
+  ['G',0,2,'2026-06-21T20:00:00+01:00',13],
+  ['H',0,2,'2026-06-21T23:00:00+01:00',9],
+  ['H',3,1,'2026-06-22T01:00:00+01:00',8],
+  ['I',3,1,'2026-06-22T17:00:00+01:00',6],
+  ['I',0,2,'2026-06-22T20:00:00+01:00',5],
+  ['J',0,2,'2026-06-22T23:00:00+01:00',10],
+  ['J',3,1,'2026-06-23T01:00:00+01:00',2],
+  ['K',3,1,'2026-06-23T17:00:00+01:00',12],
+  ['K',0,2,'2026-06-23T20:00:00+01:00',7],
+  ['L',0,2,'2026-06-23T23:00:00+01:00',11],
+  ['L',3,1,'2026-06-24T01:00:00+01:00',15],
+  // ---- Matchday 3 (Jun 24–27, simultaneous kickoffs per group) ----
+  ['C',3,0,'2026-06-24T17:00:00+01:00',5],
+  ['C',1,2,'2026-06-24T17:00:00+01:00',6],
+  ['B',3,0,'2026-06-24T20:00:00+01:00',4],
+  ['B',1,2,'2026-06-24T20:00:00+01:00',3],
+  ['A',3,0,'2026-06-24T23:00:00+01:00',0],
+  ['A',1,2,'2026-06-24T23:00:00+01:00',1],
+  ['E',3,0,'2026-06-25T17:00:00+01:00',10],
+  ['E',1,2,'2026-06-25T17:00:00+01:00',12],
+  ['F',3,0,'2026-06-25T20:00:00+01:00',11],
+  ['F',1,2,'2026-06-25T20:00:00+01:00',9],
+  ['D',3,0,'2026-06-25T23:00:00+01:00',13],
+  ['D',1,2,'2026-06-25T23:00:00+01:00',14],
+  ['G',3,0,'2026-06-26T17:00:00+01:00',15],
+  ['G',1,2,'2026-06-26T17:00:00+01:00',3],
+  ['H',3,0,'2026-06-26T20:00:00+01:00',8],
+  ['H',1,2,'2026-06-26T20:00:00+01:00',10],
+  ['I',3,0,'2026-06-26T23:00:00+01:00',7],
+  ['I',1,2,'2026-06-26T23:00:00+01:00',6],
+  ['J',3,0,'2026-06-27T17:00:00+01:00',11],
+  ['J',1,2,'2026-06-27T17:00:00+01:00',2],
+  ['K',3,0,'2026-06-27T20:00:00+01:00',9],
+  ['K',1,2,'2026-06-27T20:00:00+01:00',12],
+  ['L',3,0,'2026-06-27T23:00:00+01:00',5],
+  ['L',1,2,'2026-06-27T23:00:00+01:00',4],
+];
+
+// Knockouts: [id, stage, kickoffBST, venueIdx, label]
+const KO = [
+  ['r32_1','r32','2026-06-28T17:00:00+01:00',13],
+  ['r32_2','r32','2026-06-28T20:00:00+01:00',8],
+  ['r32_3','r32','2026-06-28T23:30:00+01:00',0],
+  ['r32_4','r32','2026-06-29T17:00:00+01:00',6],
+  ['r32_5','r32','2026-06-29T20:00:00+01:00',3],
+  ['r32_6','r32','2026-06-29T23:00:00+01:00',5],
+  ['r32_7','r32','2026-06-30T17:00:00+01:00',11],
+  ['r32_8','r32','2026-06-30T20:00:00+01:00',1],
+  ['r32_9','r32','2026-06-30T23:00:00+01:00',10],
+  ['r32_10','r32','2026-07-01T17:00:00+01:00',7],
+  ['r32_11','r32','2026-07-01T20:00:00+01:00',9],
+  ['r32_12','r32','2026-07-01T23:00:00+01:00',15],
+  ['r32_13','r32','2026-07-02T17:00:00+01:00',12],
+  ['r32_14','r32','2026-07-02T21:00:00+01:00',14],
+  ['r32_15','r32','2026-07-03T17:00:00+01:00',8],
+  ['r32_16','r32','2026-07-03T21:00:00+01:00',2],
+  ['r16_1','r16','2026-07-04T17:00:00+01:00',7],
+  ['r16_2','r16','2026-07-04T21:00:00+01:00',10],
+  ['r16_3','r16','2026-07-05T17:00:00+01:00',5],
+  ['r16_4','r16','2026-07-05T21:00:00+01:00',11],
+  ['r16_5','r16','2026-07-06T17:00:00+01:00',9],
+  ['r16_6','r16','2026-07-06T21:00:00+01:00',15],
+  ['r16_7','r16','2026-07-07T17:00:00+01:00',13],
+  ['r16_8','r16','2026-07-07T21:00:00+01:00',12],
+  ['qf_1','qf','2026-07-09T21:00:00+01:00',6],
+  ['qf_2','qf','2026-07-10T17:00:00+01:00',13],
+  ['qf_3','qf','2026-07-10T21:00:00+01:00',8],
+  ['qf_4','qf','2026-07-11T21:00:00+01:00',12],
+  ['sf_1','sf','2026-07-14T21:00:00+01:00',11],
+  ['sf_2','sf','2026-07-15T21:00:00+01:00',9],
+  ['tp_1','final','2026-07-18T20:00:00+01:00',8,'Third Place Play-off'],
+  ['final_1','final','2026-07-19T20:00:00+01:00',5,'Final'],
+];
+
+function buildFixtures() {
+  const fixtures = [];
+  const counters = {};
+  for (const [g, h, a, iso, v] of GS) {
+    counters[g] = (counters[g] || 0) + 1;
+    fixtures.push({
+      id: `gs_${g}${counters[g]}`,
+      stage: 'group', group: g,
+      homeTeam: GROUPS[g][h], awayTeam: GROUPS[g][a],
+      kickoffBST: iso, venue: VENUES[v],
+    });
+  }
+  const ko = loadJSON('knockoutTeams', {});
+  for (const [id, stage, iso, v, label] of KO) {
+    fixtures.push({
+      id, stage, group: null,
+      homeTeam: (ko[id] && ko[id].home) || 'TBD',
+      awayTeam: (ko[id] && ko[id].away) || 'TBD',
+      kickoffBST: iso, venue: VENUES[v], label: label || null,
+    });
+  }
+  fixtures.sort((a, b) => new Date(a.kickoffBST) - new Date(b.kickoffBST));
+  return fixtures;
+}
+
+const STAGE_LABEL = { group: 'Group', r32: 'Round of 32', r16: 'Round of 16', qf: 'Quarterfinal', sf: 'Semifinal', final: 'Final' };
+
+function stageLabel(f) {
+  if (f.label) return f.label;
+  if (f.stage === 'group') return `Group ${f.group}`;
+  return STAGE_LABEL[f.stage];
+}
+
+/* ============================================================
+   2. STORAGE + STATE
+   ============================================================ */
+
+function loadJSON(key, fallback) {
+  try { const v = localStorage.getItem(key); return v ? JSON.parse(v) : fallback; }
+  catch { return fallback; }
+}
+function saveJSON(key, val) { localStorage.setItem(key, JSON.stringify(val)); }
+
+const state = {
+  view: 'today',                 // 'today' | 'fixtures'
+  filter: 'ALL',
+  fixtures: null,                // built in init
+  loading: new Set(),            // fixture ids currently fetching
+  errors: {},                    // fixture id -> error message
+  editingKO: null,               // knockout fixture id being edited
+  claudePanel: null,             // fixture id with the Claude paste panel open
+  claudeCopied: false,           // whether the prompt auto-copy succeeded
+  claudeDraft: {},               // fixture id -> pasted text preserved across re-renders
+};
+
+const getKey = k => localStorage.getItem(k) || '';
+const predictions = () => loadJSON('predictions', {});
+
+/* ============================================================
+   3. TIME HELPERS (everything displayed in BST / Europe/London)
+   ============================================================ */
+
+const fmtTime = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', hour: '2-digit', minute: '2-digit' });
+const fmtDate = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'short', day: 'numeric', month: 'short' });
+const fmtDateLong = new Intl.DateTimeFormat('en-GB', { timeZone: 'Europe/London', weekday: 'long', day: 'numeric', month: 'long' });
+
+function kickoffStr(iso) { return `${fmtTime.format(new Date(iso))} BST`; }
+
+function countdownStr(iso) {
+  const diff = new Date(iso) - Date.now();
+  if (diff <= 0) {
+    if (diff > -125 * 60 * 1000) return '⚽ In progress';
+    return 'Finished';
+  }
+  const mins = Math.floor(diff / 60000);
+  const d = Math.floor(mins / 1440), h = Math.floor((mins % 1440) / 60), m = mins % 60;
+  if (d > 0) return `in ${d}d ${h}h`;
+  if (h > 0) return `in ${h}h ${m}m`;
+  return `in ${m}m`;
+}
+
+function agoStr(isoFetched) {
+  const mins = Math.floor((Date.now() - new Date(isoFetched)) / 60000);
+  if (mins < 1) return 'just now';
+  if (mins < 60) return `${mins}m ago`;
+  const h = Math.floor(mins / 60);
+  if (h < 24) return `${h}h ago`;
+  return `${Math.floor(h / 24)}d ago`;
+}
+
+/* ============================================================
+   4. RENDERING
+   ============================================================ */
+
+const $ = sel => document.querySelector(sel);
+const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;' }[c]));
+
+function render() {
+  const on = 'bg-white dark:bg-zinc-700 shadow-sm', off = 'text-zinc-500 dark:text-zinc-400';
+  $('#tab-today').className = `px-3 py-1.5 rounded-md ${state.view === 'today' ? on : off}`;
+  $('#tab-fixtures').className = `px-3 py-1.5 rounded-md ${state.view === 'fixtures' ? on : off}`;
+  $('#filter-strip').classList.toggle('hidden', state.view !== 'fixtures');
+
+  if (state.view === 'today') renderToday(); else renderFixturesView();
+}
+
+function renderToday() {
+  const now = Date.now();
+  const horizon = now + 48 * 3600 * 1000;
+  // include games that kicked off < 2h ago so an in-progress game doesn't vanish
+  const list = state.fixtures.filter(f => {
+    const t = new Date(f.kickoffBST).getTime();
+    return t > now - 2 * 3600 * 1000 && t <= horizon;
+  });
+  let html = `<h2 class="font-semibold text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-3">Kicking off in the next 48 hours</h2>`;
+  if (!list.length) {
+    html += `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-500">No games in the next 48 hours.<br><button class="mt-2 underline" data-action="goto-fixtures">Browse all fixtures →</button></div>`;
+  } else {
+    html += list.map(cardHTML).join('');
+  }
+  $('#content').innerHTML = html;
+}
+
+const FILTERS = [
+  ['ALL', 'All'], ['TODAY', 'Today'], ['group', 'Group stage'],
+  ['r32', 'R32'], ['r16', 'R16'], ['qf', 'QF'], ['sf', 'SF'], ['final', 'Final'],
+];
+
+function renderFilterStrip() {
+  $('#filter-strip').innerHTML = FILTERS.map(([key, label]) => {
+    const active = state.filter === key;
+    return `<button data-filter="${key}" class="px-3 py-1.5 rounded-full whitespace-nowrap border ${active
+      ? 'bg-emerald-600 border-emerald-600 text-white'
+      : 'border-zinc-300 dark:border-zinc-700 text-zinc-600 dark:text-zinc-300 hover:border-zinc-400'}">${label}</button>`;
+  }).join('');
+}
+
+function renderFixturesView() {
+  renderFilterStrip();
+  let list = state.fixtures;
+  if (state.filter === 'TODAY') {
+    const todayStr = fmtDate.format(new Date());
+    list = list.filter(f => fmtDate.format(new Date(f.kickoffBST)) === todayStr);
+  } else if (state.filter !== 'ALL') {
+    list = list.filter(f => f.stage === state.filter);
+  }
+  if (!list.length) {
+    $('#content').innerHTML = `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-500">No fixtures match this filter.</div>`;
+    return;
+  }
+  // group by stage, then date
+  const stageOrder = ['group', 'r32', 'r16', 'qf', 'sf', 'final'];
+  const stageHeading = { group: 'Group Stage', r32: 'Round of 32', r16: 'Round of 16', qf: 'Quarterfinals', sf: 'Semifinals', final: 'Final Round' };
+  let html = '';
+  for (const stg of stageOrder) {
+    const inStage = list.filter(f => f.stage === stg);
+    if (!inStage.length) continue;
+    html += `<h2 class="font-bold text-base mt-6 first:mt-0 mb-1">${stageHeading[stg]}</h2>`;
+    let lastDate = '';
+    for (const f of inStage) {
+      const d = fmtDateLong.format(new Date(f.kickoffBST));
+      if (d !== lastDate) {
+        html += `<h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mt-3 mb-2">${d}</h3>`;
+        lastDate = d;
+      }
+      html += cardHTML(f);
+    }
+  }
+  $('#content').innerHTML = html;
+}
+
+function probBarHTML(p) {
+  const seg = (pct, cls) => {
+    const w = Math.max(pct, 0.5);
+    const label = pct >= 9 ? `${Math.round(pct)}%` : '';
+    return `<div class="${cls} flex items-center justify-center text-[10px] font-semibold text-white/95 overflow-hidden" style="width:${w}%">${label}</div>`;
+  };
+  return `
+    <div class="mt-3">
+      <div class="flex h-5 rounded-md overflow-hidden">
+        ${seg(p.home, 'bg-emerald-500')}${seg(p.draw, 'bg-zinc-400 dark:bg-zinc-500')}${seg(p.away, 'bg-sky-500')}
+      </div>
+      <div class="flex justify-between text-[10px] text-zinc-500 dark:text-zinc-400 mt-1">
+        <span>Home win</span><span>Draw</span><span>Away win</span>
+      </div>
+    </div>`;
+}
+
+function predictionHTML(f, cached) {
+  const r = cached.result;
+  const badge = r.source === 'ai+odds'
+    ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">AI + odds</span>`
+    : r.source === 'ai_only'
+    ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-zinc-200 text-zinc-600 dark:bg-zinc-700 dark:text-zinc-300">AI only</span>`
+    : `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-amber-100 text-amber-700 dark:bg-amber-900/50 dark:text-amber-300">Odds only</span>`;
+  const claudeLink = r.source === 'odds_only'
+    ? `<button data-action="copy-prompt" data-id="${f.id}" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">✨ Add Claude analysis</button> · `
+    : `<button data-action="copy-prompt" data-id="${f.id}" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">✨ Update analysis</button> · `;
+  return `
+    <div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700 fade-in">
+      <div class="flex items-center justify-center gap-3 text-xl sm:text-2xl font-extrabold">
+        <span class="flex items-center gap-2 min-w-0"><span>${flag(f.homeTeam)}</span><span class="truncate">${esc(f.homeTeam)}</span></span>
+        <span class="px-3 py-1 rounded-lg bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 tabular-nums shrink-0">${r.final_score.home}&thinsp;–&thinsp;${r.final_score.away}</span>
+        <span class="flex items-center gap-2 min-w-0"><span class="truncate">${esc(f.awayTeam)}</span><span>${flag(f.awayTeam)}</span></span>
+      </div>
+      ${probBarHTML(r.blended_prob)}
+      <div class="flex items-center gap-2 mt-2">${badge}</div>
+      <p class="italic text-sm text-zinc-500 dark:text-zinc-400 mt-1.5">${esc(r.key_factor)}</p>
+      <div class="text-right text-xs text-zinc-400 dark:text-zinc-500 mt-1">
+        ${claudeLink}Fetched ${agoStr(cached.fetchedAt)} ·
+        <button data-action="predict" data-id="${f.id}" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">↻ Refresh</button>
+      </div>
+    </div>`;
+}
+
+function claudePanelHTML(f, err) {
+  const draft = (state.claudeDraft && state.claudeDraft[f.id]) || '';
+  return `
+    <div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700 space-y-2 fade-in">
+      <p class="text-xs text-zinc-600 dark:text-zinc-300">
+        ${state.claudeCopied ? '✅ Prompt copied.' : '⚠️ Couldn’t auto-copy — use “Show prompt” below.'}
+        Paste it into <a href="https://claude.ai/new" target="_blank" class="underline font-medium">claude.ai ↗</a>
+        (web search on), then paste Claude’s reply here:
+      </p>
+      <details class="text-xs text-zinc-500">
+        <summary class="cursor-pointer underline">Show prompt</summary>
+        <textarea readonly rows="6" class="w-full mt-1 px-2 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-zinc-50 dark:bg-zinc-800 text-xs font-mono" onclick="this.select()">${esc(buildClaudePrompt(f))}</textarea>
+      </details>
+      <textarea id="ai-paste-${f.id}" rows="3" placeholder="Paste Claude’s reply (the JSON) here…"
+        class="w-full px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-sm font-mono">${esc(draft)}</textarea>
+      ${err ? `<p class="text-sm text-red-600 dark:text-red-400">⚠️ ${esc(err)}</p>` : ''}
+      <div class="flex gap-2">
+        <button data-action="paste-ai" data-id="${f.id}" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium">Use reply</button>
+        <button data-action="copy-prompt" data-id="${f.id}" class="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-sm">📋 Copy prompt again</button>
+        <button data-action="claude-cancel" data-id="${f.id}" class="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-sm">Close</button>
+      </div>
+    </div>`;
+}
+
+function koEditorHTML(f) {
+  return `
+    <div class="mt-3 pt-3 border-t border-zinc-200 dark:border-zinc-700 space-y-2 fade-in">
+      <p class="text-xs font-semibold text-zinc-500 dark:text-zinc-400">Set teams for this fixture</p>
+      <div class="flex gap-2">
+        <input id="ko-home-${f.id}" placeholder="Home team" value="${f.homeTeam === 'TBD' ? '' : esc(f.homeTeam)}"
+          class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-sm">
+        <input id="ko-away-${f.id}" placeholder="Away team" value="${f.awayTeam === 'TBD' ? '' : esc(f.awayTeam)}"
+          class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-sm">
+      </div>
+      <div class="flex gap-2">
+        <button data-action="ko-save" data-id="${f.id}" class="px-3 py-1.5 rounded-lg bg-emerald-600 text-white text-sm font-medium">Save</button>
+        <button data-action="ko-cancel" data-id="${f.id}" class="px-3 py-1.5 rounded-lg border border-zinc-300 dark:border-zinc-600 text-sm">Cancel</button>
+      </div>
+    </div>`;
+}
+
+function cardHTML(f) {
+  const cached = predictions()[f.id];
+  const isLoading = state.loading.has(f.id);
+  const err = state.errors[f.id];
+  const tbd = f.homeTeam === 'TBD' || f.awayTeam === 'TBD';
+  const isKO = f.stage !== 'group';
+
+  let actionArea = '';
+  if (isLoading) {
+    actionArea = `<button disabled class="w-full mt-3 py-2.5 rounded-lg bg-emerald-600/70 text-white text-sm font-semibold"><span class="spinner mr-2"></span>Working…</button>`;
+  } else if (state.editingKO === f.id) {
+    actionArea = koEditorHTML(f);
+  } else if (state.claudePanel === f.id) {
+    actionArea = (cached && !tbd ? predictionHTML(f, cached) : '') + claudePanelHTML(f, err);
+  } else if (err) {
+    actionArea = `<div class="mt-3 text-sm text-red-600 dark:text-red-400">⚠️ ${esc(err)}
+      <button data-action="predict" data-id="${f.id}" class="underline ml-1">Retry</button></div>` + (cached && !tbd ? predictionHTML(f, cached) : '');
+  } else if (tbd) {
+    actionArea = `<button data-action="ko-edit" data-id="${f.id}" class="w-full mt-3 py-2.5 rounded-lg border border-dashed border-zinc-300 dark:border-zinc-600 text-zinc-500 dark:text-zinc-400 text-sm font-medium hover:border-zinc-400">Teams TBD — tap to set once known</button>`;
+  } else if (cached) {
+    actionArea = predictionHTML(f, cached);
+  } else {
+    const hasOddsKey = !!getKey('oddsApiKey');
+    actionArea = `<div class="flex gap-2 mt-3">
+      ${hasOddsKey ? `<button data-action="predict" data-id="${f.id}" class="flex-1 py-2.5 rounded-lg bg-emerald-600 hover:bg-emerald-700 active:bg-emerald-800 text-white text-sm font-semibold">Get prediction</button>` : ''}
+      <button data-action="copy-prompt" data-id="${f.id}" class="${hasOddsKey ? '' : 'flex-1 '}py-2.5 px-3 rounded-lg bg-violet-600 hover:bg-violet-700 active:bg-violet-800 text-white text-sm font-semibold">✨ Claude prompt</button>
+    </div>`;
+  }
+
+  const editBtn = isKO && !tbd && state.editingKO !== f.id
+    ? ` <button data-action="ko-edit" data-id="${f.id}" title="Edit teams" class="text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 text-xs">✎</button>` : '';
+
+  return `
+  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-4 mb-3" id="card-${f.id}">
+    <div class="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
+      <span class="font-semibold text-emerald-700 dark:text-emerald-400">${stageLabel(f)}${editBtn}</span>
+      <span data-countdown="${f.kickoffBST}">${countdownStr(f.kickoffBST)}</span>
+    </div>
+    <div class="flex items-center justify-between mt-2 gap-2">
+      <div class="flex-1 min-w-0 font-semibold text-base sm:text-lg flex items-center gap-2">
+        <span class="text-xl">${flag(f.homeTeam)}</span><span class="truncate">${esc(f.homeTeam)}</span>
+      </div>
+      <div class="text-zinc-400 text-sm font-medium shrink-0">vs</div>
+      <div class="flex-1 min-w-0 font-semibold text-base sm:text-lg flex items-center justify-end gap-2 text-right">
+        <span class="truncate">${esc(f.awayTeam)}</span><span class="text-xl">${flag(f.awayTeam)}</span>
+      </div>
+    </div>
+    <div class="mt-1.5 text-xs text-zinc-500 dark:text-zinc-400 flex flex-wrap gap-x-3 gap-y-0.5">
+      <span>🕗 ${fmtDate.format(new Date(f.kickoffBST))}, ${kickoffStr(f.kickoffBST)}</span>
+      <span>📍 ${esc(f.venue)}</span>
+    </div>
+    ${actionArea}
+  </div>`;
+}
+
+// lightweight tick: update countdowns without a full re-render
+setInterval(() => {
+  document.querySelectorAll('[data-countdown]').forEach(el => {
+    el.textContent = countdownStr(el.dataset.countdown);
+  });
+}, 30000);
+
+/* ============================================================
+   5. PREDICTION ENGINE
+   ============================================================ */
+
+/* ---- Step 1: AI analysis via Claude Pro (claude.ai copy/paste bridge) ---- */
+
+function buildClaudePrompt(f) {
+  const today = new Date().toISOString().slice(0, 10);
+  return `You are an expert football prediction analyst for the 2026 FIFA World Cup. Today is ${today}. Use web search to find the most current information before predicting: team form in this tournament so far, any injuries or suspensions, tactical matchup context, and head-to-head record.
+
+Predict the scoreline for ${f.homeTeam} vs ${f.awayTeam}, ${stageLabel(f)}, 2026 FIFA World Cup, kicking off ${fmtDateLong.format(new Date(f.kickoffBST))} at ${kickoffStr(f.kickoffBST)}.
+
+Reply with ONLY this JSON object — no markdown, no other text:
+{ "ai_score": { "home": number, "away": number }, "win_prob": { "home": number, "draw": number, "away": number }, "key_factor": "one sentence" }
+"home" is ${f.homeTeam}, "away" is ${f.awayTeam}. win_prob values must sum to 100.`;
+}
+
+// Parse the reply the user pastes back from claude.ai
+function parseAIReply(text) {
+  const start = text.indexOf('{'), end = text.lastIndexOf('}');
+  if (start === -1 || end <= start) throw new Error('Couldn’t find JSON in the pasted reply — paste Claude’s full answer.');
+  let ai;
+  try { ai = JSON.parse(text.slice(start, end + 1)); }
+  catch { throw new Error('Couldn’t parse the pasted reply as JSON — ask Claude to reply with only the JSON object.'); }
+
+  if (!ai.ai_score || !ai.win_prob) throw new Error('Pasted JSON is missing ai_score or win_prob.');
+  // normalise probabilities to sum to exactly 100
+  const wp = ai.win_prob;
+  const sum = (wp.home || 0) + (wp.draw || 0) + (wp.away || 0) || 1;
+  ai.win_prob = { home: (wp.home || 0) * 100 / sum, draw: (wp.draw || 0) * 100 / sum, away: (wp.away || 0) * 100 / sum };
+  ai.ai_score = {
+    home: Math.max(0, Math.round(ai.ai_score.home || 0)),
+    away: Math.max(0, Math.round(ai.ai_score.away || 0)),
+  };
+  ai.key_factor = String(ai.key_factor || 'No key factor provided.');
+  return ai;
+}
+
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch {
+    const ta = document.createElement('textarea');
+    ta.value = text; ta.style.position = 'fixed'; ta.style.opacity = '0';
+    document.body.appendChild(ta); ta.select();
+    let ok = false;
+    try { ok = document.execCommand('copy'); } catch {}
+    ta.remove(); return ok;
+  }
+}
+
+/* ---- Step 2: The Odds API + Poisson model ---- */
+
+// The Odds API may use different team naming — normalise + alias before matching
+const TEAM_ALIASES = [
+  ['usa', 'united states'],
+  ['turkiye', 'turkey'],
+  ['south korea', 'korea republic'],
+  ['czechia', 'czech republic'],
+  ['bosnia-herzegovina', 'bosnia and herzegovina', 'bosnia herzegovina'],
+  ['ivory coast', "cote d'ivoire", 'cote divoire'],
+  ['congo dr', 'dr congo', 'democratic republic of the congo', 'congo democratic republic'],
+  ['cape verde', 'cape verde islands', 'cabo verde'],
+  ['iran', 'ir iran'],
+];
+
+function normTeam(name) {
+  return String(name).toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
+    .replace(/[^a-z0-9 ]/g, ' ').replace(/\s+/g, ' ').trim();
+}
+function teamsMatch(a, b) {
+  const na = normTeam(a), nb = normTeam(b);
+  if (na === nb) return true;
+  for (const aliases of TEAM_ALIASES) {
+    if (aliases.includes(na) && aliases.includes(nb)) return true;
+  }
+  return na.length > 3 && nb.length > 3 && (na.includes(nb) || nb.includes(na));
+}
+
+const FACT = [1, 1, 2, 6, 24, 120, 720, 5040, 40320, 362880];
+const pois = (k, lam) => Math.exp(-lam) * Math.pow(lam, k) / FACT[k];
+
+function matchOutcomeProbs(lh, la) {
+  let pH = 0, pD = 0, pA = 0;
+  for (let h = 0; h <= 9; h++) for (let a = 0; a <= 9; a++) {
+    const p = pois(h, lh) * pois(a, la);
+    if (h > a) pH += p; else if (h === a) pD += p; else pA += p;
+  }
+  return { pH, pD, pA };
+}
+
+// Most likely exact scoreline under the fitted Poisson model, capped at 5 goals/team
+function mostLikelyScore(lh, la) {
+  let best = { home: 1, away: 1 }, bestP = -1;
+  for (let h = 0; h <= 5; h++) for (let a = 0; a <= 5; a++) {
+    const p = pois(h, lh) * pois(a, la);
+    if (p > bestP) { bestP = p; best = { home: h, away: a }; }
+  }
+  return best;
+}
+
+// Fit expected goals to the implied W/D/L split via grid search,
+// weakly anchored to the totals-market expected goals
+function fitPoisson(implied, totalAnchor) {
+  const tH = implied.home / 100, tD = implied.draw / 100, tA = implied.away / 100;
+  let best = { lh: 1.3, la: 1.3 }, bestErr = Infinity;
+  for (let lh = 0.2; lh <= 3.4; lh += 0.05) {
+    for (let la = 0.2; la <= 3.4; la += 0.05) {
+      const { pH, pD, pA } = matchOutcomeProbs(lh, la);
+      const err = (pH - tH) ** 2 + (pD - tD) ** 2 + (pA - tA) ** 2
+        + 0.015 * (lh + la - totalAnchor) ** 2;
+      if (err < bestErr) { bestErr = err; best = { lh, la }; }
+    }
+  }
+  return best;
+}
+
+async function fetchOddsSignal(f) {
+  const key = getKey('oddsApiKey');
+  if (!key) return null;
+
+  const url = `https://api.the-odds-api.com/v4/sports/${ODDS_SPORT_KEY}/odds/?apiKey=${encodeURIComponent(key)}&regions=uk&markets=h2h,totals&oddsFormat=decimal`;
+  const res = await fetch(url);
+  if (!res.ok) return null; // graceful skip on bad key / quota / sport not live
+  const events = await res.json();
+  if (!Array.isArray(events)) return null;
+
+  const ev = events.find(e =>
+    (teamsMatch(e.home_team, f.homeTeam) && teamsMatch(e.away_team, f.awayTeam)) ||
+    (teamsMatch(e.home_team, f.awayTeam) && teamsMatch(e.away_team, f.homeTeam)));
+  if (!ev) return null;
+  const flipped = !teamsMatch(ev.home_team, f.homeTeam);
+
+  // consensus h2h: average decimal odds per outcome across bookmakers
+  const sums = { home: 0, draw: 0, away: 0 }, counts = { home: 0, draw: 0, away: 0 };
+  let totalPointSum = 0, totalPointCount = 0;
+  for (const bm of ev.bookmakers || []) {
+    for (const mkt of bm.markets || []) {
+      if (mkt.key === 'h2h') {
+        for (const o of mkt.outcomes || []) {
+          let side = null;
+          if (/^draw$/i.test(o.name)) side = 'draw';
+          else if (teamsMatch(o.name, ev.home_team)) side = flipped ? 'away' : 'home';
+          else if (teamsMatch(o.name, ev.away_team)) side = flipped ? 'home' : 'away';
+          if (side && o.price > 1) { sums[side] += o.price; counts[side]++; }
+        }
+      } else if (mkt.key === 'totals') {
+        for (const o of mkt.outcomes || []) {
+          if (typeof o.point === 'number') { totalPointSum += o.point; totalPointCount++; }
+        }
+      }
+    }
+  }
+  if (!counts.home || !counts.draw || !counts.away) return null;
+
+  // implied probabilities from average odds (1/avgOdds), overround removed by normalising
+  const inv = {
+    home: counts.home / sums.home,
+    draw: counts.draw / sums.draw,
+    away: counts.away / sums.away,
+  };
+  const invSum = inv.home + inv.draw + inv.away;
+  const implied = {
+    home: inv.home / invSum * 100,
+    draw: inv.draw / invSum * 100,
+    away: inv.away / invSum * 100,
+  };
+
+  const totalAnchor = totalPointCount ? totalPointSum / totalPointCount : 2.6;
+  const { lh, la } = fitPoisson(implied, totalAnchor);
+  return { odds_score: mostLikelyScore(lh, la), implied_prob: implied };
+}
+
+/* ---- Step 3: blend and surface ---- */
+function blendSignals(ai, odds) {
+  const outcomeOf = s => s.home > s.away ? 'home' : s.home < s.away ? 'away' : 'draw';
+
+  if (!ai && !odds) return null;
+  if (!ai) {
+    return {
+      final_score: odds.odds_score,
+      blended_prob: roundProbs(odds.implied_prob),
+      source: 'odds_only',
+      key_factor: 'Derived from bookmaker consensus odds via a Poisson scoreline model.',
+    };
+  }
+  if (!odds) {
+    return {
+      final_score: ai.ai_score,
+      blended_prob: roundProbs(ai.win_prob),
+      source: 'ai_only',
+      key_factor: ai.key_factor,
+    };
+  }
+
+  // 60% AI / 40% market
+  const blended = {
+    home: 0.6 * ai.win_prob.home + 0.4 * odds.implied_prob.home,
+    draw: 0.6 * ai.win_prob.draw + 0.4 * odds.implied_prob.draw,
+    away: 0.6 * ai.win_prob.away + 0.4 * odds.implied_prob.away,
+  };
+  const blendedOutcome = Object.entries(blended).sort((a, b) => b[1] - a[1])[0][0];
+
+  let final_score;
+  if (outcomeOf(ai.ai_score) === outcomeOf(odds.odds_score)) {
+    final_score = ai.ai_score; // both agree on outcome → AI score is more specific
+  } else {
+    // disagreement → take blended outcome, prefer the more conservative (lower-scoring) candidate
+    const candidates = [ai.ai_score, odds.odds_score].filter(s => outcomeOf(s) === blendedOutcome);
+    if (candidates.length) {
+      candidates.sort((a, b) => (a.home + a.away) - (b.home + b.away));
+      final_score = candidates[0];
+    } else {
+      // neither candidate matches the blended outcome — synthesise a conservative one
+      final_score = blendedOutcome === 'home' ? { home: 1, away: 0 }
+        : blendedOutcome === 'away' ? { home: 0, away: 1 } : { home: 1, away: 1 };
+    }
+  }
+  return { final_score, blended_prob: roundProbs(blended), source: 'ai+odds', key_factor: ai.key_factor };
+}
+
+function roundProbs(p) {
+  const home = Math.round(p.home), away = Math.round(p.away);
+  return { home, draw: Math.max(0, 100 - home - away), away };
+}
+
+/* ---- pipeline ---- */
+
+// Market prediction (instant, free). Keeps any previously pasted Claude
+// analysis and re-blends it with fresh odds.
+async function getPrediction(fixtureId) {
+  const f = state.fixtures.find(x => x.id === fixtureId);
+  if (!f || f.homeTeam === 'TBD' || f.awayTeam === 'TBD') return;
+  if (state.loading.has(fixtureId)) return;
+
+  state.loading.add(fixtureId);
+  delete state.errors[fixtureId];
+  render();
+
+  try {
+    const cached = predictions()[fixtureId];
+    const ai = (cached && cached.signals && cached.signals.ai) || null;
+    const odds = await fetchOddsSignal(f).catch(() => null);
+    const result = blendSignals(ai, odds);
+    if (!result) {
+      if (!getKey('oddsApiKey')) throw new Error('Add a free Odds API key in Settings, or use the ✨ Claude prompt flow.');
+      throw new Error('No bookmaker odds found for this fixture yet — try again closer to kickoff, or use the ✨ Claude prompt flow.');
+    }
+    savePrediction(fixtureId, result, ai);
+  } catch (e) {
+    state.errors[fixtureId] = e.message || 'Prediction failed.';
+  } finally {
+    state.loading.delete(fixtureId);
+    render();
+  }
+}
+
+// Open the Claude panel and copy the prompt for the user to paste into claude.ai
+async function startClaudeFlow(fixtureId) {
+  const f = state.fixtures.find(x => x.id === fixtureId);
+  if (!f) return;
+  const copied = await copyText(buildClaudePrompt(f));
+  state.claudePanel = fixtureId;
+  state.claudeCopied = copied;
+  delete state.errors[fixtureId];
+  render();
+}
+
+// Parse the reply pasted back from claude.ai, blend with fresh odds, save
+async function useClaudeReply(fixtureId, text) {
+  const f = state.fixtures.find(x => x.id === fixtureId);
+  if (!f || state.loading.has(fixtureId)) return;
+
+  state.loading.add(fixtureId);
+  delete state.errors[fixtureId];
+  render();
+
+  try {
+    const ai = parseAIReply(text);
+    const odds = await fetchOddsSignal(f).catch(() => null);
+    savePrediction(fixtureId, blendSignals(ai, odds), ai);
+    state.claudePanel = null;
+  } catch (e) {
+    state.errors[fixtureId] = e.message || 'Could not use the pasted reply.';
+  } finally {
+    state.loading.delete(fixtureId);
+    render();
+  }
+}
+
+function savePrediction(fixtureId, result, ai) {
+  const all = predictions();
+  all[fixtureId] = { result, signals: { ai: ai || null }, fetchedAt: new Date().toISOString() };
+  saveJSON('predictions', all);
+}
+
+/* ============================================================
+   6. SETTINGS
+   ============================================================ */
+
+function keyRowHTML(storageKey, placeholder) {
+  const val = getKey(storageKey);
+  if (val) {
+    const masked = '••••••••' + val.slice(-4);
+    return `
+      <div class="flex gap-2 items-center">
+        <span class="flex-1 px-3 py-2 rounded-lg bg-zinc-100 dark:bg-zinc-800 text-sm font-mono">${masked}</span>
+        <button data-clearkey="${storageKey}" class="px-3 py-2 rounded-lg border border-red-300 dark:border-red-800 text-red-600 dark:text-red-400 text-sm">Clear</button>
+      </div>`;
+  }
+  return `
+    <div class="flex gap-2 items-center">
+      <input type="password" data-keyinput="${storageKey}" placeholder="${placeholder}" autocomplete="off"
+        class="flex-1 min-w-0 px-3 py-2 rounded-lg border border-zinc-300 dark:border-zinc-600 bg-white dark:bg-zinc-800 text-sm font-mono">
+      <button data-savekey="${storageKey}" class="px-3 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium">Save</button>
+    </div>`;
+}
+
+function renderSettings() {
+  $('#odds-key-row').innerHTML = keyRowHTML('oddsApiKey', 'Odds API key');
+}
+
+function openSettings() { renderSettings(); $('#settings-modal').classList.remove('hidden'); }
+function closeSettings() { $('#settings-modal').classList.add('hidden'); updateBanner(); }
+
+function applyDarkMode() {
+  const dark = loadJSON('darkMode', window.matchMedia('(prefers-color-scheme: dark)').matches);
+  document.documentElement.classList.toggle('dark', dark);
+}
+
+function updateBanner() {
+  const show = !getKey('oddsApiKey') && !loadJSON('setupDismissed', false);
+  $('#setup-banner').classList.toggle('hidden', !show);
+}
+
+/* ============================================================
+   7. EVENTS
+   ============================================================ */
+
+function setView(v) { state.view = v; state.editingKO = null; state.claudePanel = null; render(); }
+
+$('#tab-today').addEventListener('click', () => setView('today'));
+$('#tab-fixtures').addEventListener('click', () => setView('fixtures'));
+$('#btn-settings').addEventListener('click', openSettings);
+$('#settings-close').addEventListener('click', closeSettings);
+$('#settings-backdrop').addEventListener('click', closeSettings);
+$('#banner-open-settings').addEventListener('click', openSettings);
+$('#banner-dismiss').addEventListener('click', () => { saveJSON('setupDismissed', true); updateBanner(); });
+
+$('#dark-toggle').addEventListener('click', () => {
+  const cur = document.documentElement.classList.contains('dark');
+  saveJSON('darkMode', !cur);
+  applyDarkMode();
+});
+
+$('#filter-strip').addEventListener('click', e => {
+  const btn = e.target.closest('[data-filter]');
+  if (btn) { state.filter = btn.dataset.filter; render(); }
+});
+
+$('#settings-modal').addEventListener('click', e => {
+  const save = e.target.closest('[data-savekey]');
+  if (save) {
+    const k = save.dataset.savekey;
+    const input = document.querySelector(`[data-keyinput="${k}"]`);
+    const v = (input.value || '').trim();
+    if (v) { localStorage.setItem(k, v); renderSettings(); updateBanner(); }
+    return;
+  }
+  const clear = e.target.closest('[data-clearkey]');
+  if (clear) { localStorage.removeItem(clear.dataset.clearkey); renderSettings(); updateBanner(); }
+});
+
+$('#content').addEventListener('click', e => {
+  const btn = e.target.closest('[data-action]');
+  if (!btn) return;
+  const { action, id } = btn.dataset;
+  if (action === 'predict') {
+    getPrediction(id);
+  } else if (action === 'copy-prompt') {
+    startClaudeFlow(id);
+  } else if (action === 'paste-ai') {
+    const ta = document.getElementById(`ai-paste-${id}`);
+    const text = ta ? ta.value.trim() : '';
+    state.claudeDraft[id] = text; // survive re-render if parsing fails
+    if (!text) { state.errors[id] = 'Paste Claude’s reply first.'; render(); return; }
+    useClaudeReply(id, text).then(() => { if (!state.errors[id]) delete state.claudeDraft[id]; });
+  } else if (action === 'claude-cancel') {
+    state.claudePanel = null;
+    delete state.errors[id];
+    delete state.claudeDraft[id];
+    render();
+  } else if (action === 'goto-fixtures') {
+    setView('fixtures');
+  } else if (action === 'ko-edit') {
+    state.editingKO = id; render();
+  } else if (action === 'ko-cancel') {
+    state.editingKO = null; render();
+  } else if (action === 'ko-save') {
+    const homeEl = document.getElementById(`ko-home-${id}`);
+    const awayEl = document.getElementById(`ko-away-${id}`);
+    const home = homeEl ? homeEl.value.trim() : '';
+    const away = awayEl ? awayEl.value.trim() : '';
+    const ko = loadJSON('knockoutTeams', {});
+    if (home || away) ko[id] = { home: home || 'TBD', away: away || 'TBD' };
+    else delete ko[id];
+    saveJSON('knockoutTeams', ko);
+    state.editingKO = null;
+    state.fixtures = buildFixtures();
+    render();
+  }
+});
+
+/* ============================================================
+   8. INIT
+   ============================================================ */
+state.fixtures = buildFixtures();
+applyDarkMode();
+updateBanner();
+render();
+</script>
+</body>
+</html>
