@@ -35,10 +35,14 @@
       <h1 class="font-bold text-lg truncate">WC26 Predictor</h1>
     </div>
     <nav class="flex items-center gap-1 bg-zinc-100 dark:bg-zinc-800 rounded-lg p-1 text-sm font-medium">
-      <button id="tab-today" class="px-3 py-1.5 rounded-md">Next 7 days</button>
-      <button id="tab-fixtures" class="px-3 py-1.5 rounded-md">Fixtures</button>
+      <button id="tab-today" class="px-2.5 py-1.5 rounded-md">Upcoming</button>
+      <button id="tab-fixtures" class="px-2.5 py-1.5 rounded-md">Fixtures</button>
+      <button id="tab-results" class="px-2.5 py-1.5 rounded-md">Results</button>
     </nav>
-    <button id="btn-settings" title="Settings" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xl leading-none">⚙️</button>
+    <div class="flex items-center shrink-0">
+      <button id="btn-refresh" title="Refresh data" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-lg leading-none">↻</button>
+      <button id="btn-settings" title="Settings" class="p-2 rounded-lg hover:bg-zinc-100 dark:hover:bg-zinc-800 text-xl leading-none">⚙️</button>
+    </div>
   </div>
 </header>
 
@@ -327,6 +331,7 @@ const state = {
   claudeDraft: {},               // fixture id -> pasted text preserved across re-renders
   published: null,               // daily AI analysis fetched from predictions.json
   publishedKO: null,             // knockout team names fetched from knockouts.json
+  results: null,                 // final scores fetched from results.json
 };
 
 const getKey = k => localStorage.getItem(k) || '';
@@ -374,11 +379,59 @@ const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&':'&amp;','<':'&lt;','>
 
 function render() {
   const on = 'bg-white dark:bg-zinc-700 shadow-sm', off = 'text-zinc-500 dark:text-zinc-400';
-  $('#tab-today').className = `px-3 py-1.5 rounded-md ${state.view === 'today' ? on : off}`;
-  $('#tab-fixtures').className = `px-3 py-1.5 rounded-md ${state.view === 'fixtures' ? on : off}`;
+  $('#tab-today').className = `px-2.5 py-1.5 rounded-md ${state.view === 'today' ? on : off}`;
+  $('#tab-fixtures').className = `px-2.5 py-1.5 rounded-md ${state.view === 'fixtures' ? on : off}`;
+  $('#tab-results').className = `px-2.5 py-1.5 rounded-md ${state.view === 'results' ? on : off}`;
   $('#filter-strip').classList.toggle('hidden', state.view !== 'fixtures');
 
-  if (state.view === 'today') renderToday(); else renderFixturesView();
+  if (state.view === 'today') renderToday();
+  else if (state.view === 'results') renderResults();
+  else renderFixturesView();
+}
+
+function renderResults() {
+  const played = state.fixtures
+    .filter(f => resultFor(f.id))
+    .sort((a, b) => new Date(b.kickoffBST) - new Date(a.kickoffBST)); // newest first
+  const updated = state.results && state.results.updatedAt
+    ? ` <span class="normal-case font-normal tracking-normal">· updated ${agoStr(state.results.updatedAt)}</span>` : '';
+  let html = `<h2 class="font-semibold text-sm uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mb-3">Results${updated}</h2>`;
+  if (!played.length) {
+    html += `<div class="rounded-xl border border-dashed border-zinc-300 dark:border-zinc-700 p-8 text-center text-zinc-500">No results yet.<br><span class="text-sm">Final scores are collected automatically by the daily run after each matchday.</span></div>`;
+    $('#content').innerHTML = html;
+    return;
+  }
+  let lastDate = '';
+  for (const f of played) {
+    const d = fmtDateLong.format(new Date(f.kickoffBST));
+    if (d !== lastDate) {
+      html += `<h3 class="text-xs font-semibold uppercase tracking-wide text-zinc-500 dark:text-zinc-400 mt-4 first:mt-0 mb-2">${d}</h3>`;
+      lastDate = d;
+    }
+    const r = resultFor(f.id);
+    const pred = predictedScoreFor(f.id);
+    let predLine = '';
+    if (pred) {
+      const oc = s => s.home > s.away ? 'h' : s.home < s.away ? 'a' : 'd';
+      const mark = (pred.home === r.home && pred.away === r.away)
+        ? '<span class="text-emerald-600 dark:text-emerald-400 font-semibold">✓ exact</span>'
+        : oc(pred) === oc(r)
+        ? '<span class="text-amber-600 dark:text-amber-400 font-semibold">◐ outcome</span>'
+        : '<span class="text-red-500 font-semibold">✗</span>';
+      predLine = `<span class="text-xs text-zinc-400 dark:text-zinc-500 whitespace-nowrap">Predicted ${pred.home}–${pred.away} ${mark}</span>`;
+    }
+    html += `
+    <div class="bg-white dark:bg-zinc-900 rounded-lg border border-zinc-200 dark:border-zinc-800 px-4 py-2.5 mb-2 flex items-center gap-3 flex-wrap">
+      <span class="text-[11px] text-zinc-400 dark:text-zinc-500 w-20 shrink-0">${stageLabel(f)}</span>
+      <span class="flex-1 min-w-0 text-sm font-medium flex items-center gap-1.5 flex-wrap">
+        <span>${flag(f.homeTeam)}</span><span class="truncate">${esc(f.homeTeam)}</span>
+        <span class="font-bold tabular-nums px-1.5 rounded bg-zinc-100 dark:bg-zinc-800">${r.home}–${r.away}</span>
+        <span class="truncate">${esc(f.awayTeam)}</span><span>${flag(f.awayTeam)}</span>
+      </span>
+      ${predLine}
+    </div>`;
+  }
+  $('#content').innerHTML = html;
 }
 
 function renderToday() {
@@ -473,7 +526,7 @@ function probBarHTML(p) {
     </div>`;
 }
 
-function predictionHTML(f, cached) {
+function predictionHTML(f, cached, opts = {}) {
   const r = cached.result;
   const badge = r.source === 'ai+odds'
     ? `<span class="px-2 py-0.5 rounded-full text-[10px] font-semibold bg-violet-100 text-violet-700 dark:bg-violet-900/50 dark:text-violet-300">AI + odds</span>`
@@ -494,8 +547,8 @@ function predictionHTML(f, cached) {
       <div class="flex items-center gap-2 mt-2">${badge}</div>
       <p class="italic text-sm text-zinc-500 dark:text-zinc-400 mt-1.5">${esc(r.key_factor)}</p>
       <div class="text-right text-xs text-zinc-400 dark:text-zinc-500 mt-1">
-        ${claudeLink}Fetched ${agoStr(cached.fetchedAt)} ·
-        <button data-action="predict" data-id="${f.id}" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">↻ Refresh</button>
+        ${opts.noActions ? `Fetched ${agoStr(cached.fetchedAt)}` : `${claudeLink}Fetched ${agoStr(cached.fetchedAt)} ·
+        <button data-action="predict" data-id="${f.id}" class="underline hover:text-zinc-600 dark:hover:text-zinc-300">↻ Refresh</button>`}
       </div>
     </div>`;
 }
@@ -547,9 +600,18 @@ function cardHTML(f) {
   const err = state.errors[f.id];
   const tbd = f.homeTeam === 'TBD' || f.awayTeam === 'TBD';
   const isKO = f.stage !== 'group';
+  const result = resultFor(f.id);
+  const finished = !!result || new Date(f.kickoffBST).getTime() < Date.now() - 125 * 60 * 1000;
 
   let actionArea = '';
-  if (isLoading) {
+  if (finished) {
+    // played game: keep the prediction visible for reference, drop all actions
+    if (cached) actionArea = predictionHTML(f, cached, { noActions: true });
+    else if (!tbd && publishedAI(f.id)) actionArea = predictionHTML(f, {
+      result: blendSignals(publishedAI(f.id), null),
+      fetchedAt: state.published.generatedAt,
+    }, { noActions: true });
+  } else if (isLoading) {
     actionArea = `<button disabled class="w-full mt-3 py-2.5 rounded-lg bg-emerald-600/70 text-white text-sm font-semibold"><span class="spinner mr-2"></span>Working…</button>`;
   } else if (state.editingKO === f.id) {
     actionArea = koEditorHTML(f);
@@ -577,14 +639,21 @@ function cardHTML(f) {
     </div>`;
   }
 
-  const editBtn = isKO && !tbd && state.editingKO !== f.id
+  const editBtn = isKO && !tbd && !finished && state.editingKO !== f.id
     ? ` <button data-action="ko-edit" data-id="${f.id}" title="Edit teams" class="text-zinc-300 dark:text-zinc-600 hover:text-zinc-500 text-xs">✎</button>` : '';
 
+  // played games show the real final score instead of a countdown, and fade out
+  const statusHTML = result
+    ? `<span class="font-bold text-zinc-700 dark:text-zinc-200">FT ${result.home}–${result.away}</span>`
+    : finished
+    ? `<span>Finished</span>`
+    : `<span data-countdown="${f.kickoffBST}">${countdownStr(f.kickoffBST)}</span>`;
+
   return `
-  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-4 mb-3" id="card-${f.id}">
+  <div class="bg-white dark:bg-zinc-900 rounded-xl border border-zinc-200 dark:border-zinc-800 shadow-sm p-4 mb-3${finished ? ' opacity-55' : ''}" id="card-${f.id}">
     <div class="flex items-center justify-between text-xs text-zinc-500 dark:text-zinc-400">
       <span class="font-semibold text-emerald-700 dark:text-emerald-400">${stageLabel(f)}${editBtn}</span>
-      <span data-countdown="${f.kickoffBST}">${countdownStr(f.kickoffBST)}</span>
+      ${statusHTML}
     </div>
     <div class="flex items-center justify-between mt-2 gap-2">
       <div class="flex-1 min-w-0 font-semibold text-base sm:text-lg flex items-center gap-2">
@@ -669,8 +738,22 @@ async function loadPublished() {
     const res = await fetch('knockouts.json', { cache: 'no-store' });
     if (res.ok) state.publishedKO = await res.json();
   } catch { /* optional */ }
+  try {
+    const res = await fetch('results.json', { cache: 'no-store' });
+    if (res.ok) state.results = await res.json();
+  } catch { /* optional */ }
   state.fixtures = buildFixtures();
   render();
+}
+
+const resultFor = id => (state.results && state.results.results && state.results.results[id]) || null;
+
+// what the app recommended for a fixture (cached blend wins over published AI)
+function predictedScoreFor(id) {
+  const c = predictions()[id];
+  if (c && c.result) return c.result.final_score;
+  const p = publishedAI(id);
+  return p ? p.ai_score : null;
 }
 
 async function copyText(text) {
@@ -978,6 +1061,13 @@ function setView(v) { state.view = v; state.editingKO = null; state.claudePanel 
 
 $('#tab-today').addEventListener('click', () => setView('today'));
 $('#tab-fixtures').addEventListener('click', () => setView('fixtures'));
+$('#tab-results').addEventListener('click', () => setView('results'));
+$('#btn-refresh').addEventListener('click', async e => {
+  const btn = e.currentTarget;
+  btn.style.animation = 'spin .7s linear infinite';
+  await loadPublished();          // fresh predictions, results, knockout teams
+  btn.style.animation = '';
+});
 $('#btn-settings').addEventListener('click', openSettings);
 $('#settings-close').addEventListener('click', closeSettings);
 $('#settings-backdrop').addEventListener('click', closeSettings);
